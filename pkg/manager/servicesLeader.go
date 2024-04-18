@@ -3,6 +3,10 @@ package manager
 import (
 	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/kubernetes"
+	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -32,6 +36,123 @@ func (sm *Manager) startServicesWatchForLeaderElection(ctx context.Context) erro
 	log.Infof("Shutting down kube-Vip")
 
 	return nil
+}
+
+func findFirstHealthyPod(ctx context.Context, clientset *kubernetes.Clientset, service *v1.Service) (*v1.Pod, error) {
+	selector := labels.Set(service.Spec.Selector).String()
+	podList, err := clientset.CoreV1().Pods(service.Namespace).List(ctx,
+		metav1.ListOptions{
+			LabelSelector: selector,
+		})
+	if err != nil {
+		return nil, err
+	}
+
+	// Ensure all nodes are looking at pods
+	sort.Slice(podList.Items, func(i, j int) bool {
+		return podList.Items[i].Name < podList.Items[j].Name
+	})
+
+	// Iterate through the list of pods
+	for _, pod := range podList.Items {
+		allContainersReady := true
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == v1.PodReady && condition.Status == v1.ConditionTrue {
+				for _, containerStatus := range pod.Status.ContainerStatuses {
+					if !containerStatus.Ready {
+						allContainersReady = false
+						break
+					}
+				}
+				if allContainersReady {
+					return &pod, nil // Return the first healthy pod
+				}
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("no healthy pods found")
+}
+
+func findHealthyPod(ctx context.Context, clientset *kubernetes.Clientset, service *v1.Service) ([]*v1.Pod, error) {
+	selector := labels.Set(service.Spec.Selector).String()
+	podList, err := clientset.CoreV1().Pods(service.Namespace).List(ctx,
+		metav1.ListOptions{
+			LabelSelector: selector,
+		})
+	if err != nil {
+		return nil, err
+	}
+
+	// Ensure all nodes are looking at pods
+	sort.Slice(podList.Items, func(i, j int) bool {
+		return podList.Items[i].Name < podList.Items[j].Name
+	})
+
+	var healthyPods []*v1.Pod
+
+	// Iterate through the list of pods
+	for _, pod := range podList.Items {
+		allContainersReady := true
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == v1.PodReady && condition.Status == v1.ConditionTrue {
+				for _, containerStatus := range pod.Status.ContainerStatuses {
+					if !containerStatus.Ready {
+						allContainersReady = false
+						break
+					}
+				}
+				if allContainersReady {
+					healthyPods = append(healthyPods, &pod)
+				}
+			}
+		}
+	}
+
+	if len(healthyPods) == 0 {
+		return nil, fmt.Errorf("no healthy pods found")
+	}
+
+	return healthyPods, nil // Return the list of all healthy pods
+}
+
+// The responsibility of this function is to become the leader for a service if the current
+// leader is not running on the same node as one of the services pods
+func (sm *Manager) acquireLeastForThisNodeIfLocalNode(ctx context.Context, service *v1.Service, currentLeader string) {
+	pods, err := findHealthyPod(ctx, sm.clientSet, service)
+
+	if err != nil {
+		log.Errorln(err)
+		return
+	}
+
+	// check if the current lease-holder is running on a node with a healthy pod.
+	// if true then exit.
+	for _, p := range pods {
+		if p.Spec.NodeName == currentLeader {
+			return
+		}
+	}
+
+	if pods[0].Spec.NodeName == sm.config.NodeName {
+		log.Infof("Preferred node is healthy, taking over leadership forcefully.")
+		lease, err := sm.clientSet.CoordinationV1().Leases(service.Namespace).Get(ctx, fmt.Sprintf("kubevip-%s", service.Name),
+			metav1.GetOptions{})
+		if err != nil {
+			log.Errorln(err)
+			return
+		}
+		lease.Spec.HolderIdentity = &sm.config.NodeName
+		_, err = sm.clientSet.CoordinationV1().Leases(service.Namespace).Update(ctx, lease,
+			metav1.UpdateOptions{})
+		if err != nil {
+			log.Errorln(err)
+			return
+		}
+	} else {
+		log.Infof("(svc election) new leader elected: %s", currentLeader)
+	}
+
 }
 
 // The startServicesWatchForLeaderElection function will start a services watcher, the
@@ -93,7 +214,16 @@ func (sm *Manager) StartServicesLeaderElection(ctx context.Context, service *v1.
 					// I just got the lock
 					return
 				}
-				log.Infof("(svc election) new leader elected: %s", identity)
+				prefersLocal, err := strconv.ParseBool(service.Annotations["prefersLocal"])
+
+				if err != nil {
+					fmt.Println("Error:", err)
+				}
+				if prefersLocal {
+					sm.acquireLeastForThisNodeIfLocalNode(ctx, service, identity)
+				} else {
+					log.Infof("(svc election) new leader elected: %s", identity)
+				}
 			},
 		},
 	})
