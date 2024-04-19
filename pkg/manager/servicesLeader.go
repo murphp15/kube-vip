@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
-	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -48,11 +47,6 @@ func findNodesWithHealthyPods(ctx context.Context, clientset *kubernetes.Clients
 	if err != nil {
 		return nil, err
 	}
-
-	// Ensure all nodes are looking at pods
-	sort.Slice(podList.Items, func(i, j int) bool {
-		return podList.Items[i].Name < podList.Items[j].Name
-	})
 
 	var healthyPods []string
 
@@ -105,6 +99,10 @@ func (sm *Manager) acquireLeastForThisNodeIfLocalNode(ctx context.Context, servi
 			metav1.GetOptions{})
 		if err != nil {
 			log.Errorln(err)
+			return
+		}
+		// things have changed since you were notified. stops a race condition where many nodes are force updating
+		if *lease.Spec.HolderIdentity == currentLeader {
 			return
 		}
 		lease.Spec.HolderIdentity = &sm.config.NodeName
