@@ -38,7 +38,8 @@ func (sm *Manager) startServicesWatchForLeaderElection(ctx context.Context) erro
 	return nil
 }
 
-func findFirstHealthyPod(ctx context.Context, clientset *kubernetes.Clientset, service *v1.Service) (*v1.Pod, error) {
+// used to get a list of nodes where there is a healthy pods for this service running.
+func findNodesWithHealthyPods(ctx context.Context, clientset *kubernetes.Clientset, service *v1.Service) ([]string, error) {
 	selector := labels.Set(service.Spec.Selector).String()
 	podList, err := clientset.CoreV1().Pods(service.Namespace).List(ctx,
 		metav1.ListOptions{
@@ -53,43 +54,7 @@ func findFirstHealthyPod(ctx context.Context, clientset *kubernetes.Clientset, s
 		return podList.Items[i].Name < podList.Items[j].Name
 	})
 
-	// Iterate through the list of pods
-	for _, pod := range podList.Items {
-		allContainersReady := true
-		for _, condition := range pod.Status.Conditions {
-			if condition.Type == v1.PodReady && condition.Status == v1.ConditionTrue {
-				for _, containerStatus := range pod.Status.ContainerStatuses {
-					if !containerStatus.Ready {
-						allContainersReady = false
-						break
-					}
-				}
-				if allContainersReady {
-					return &pod, nil // Return the first healthy pod
-				}
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("no healthy pods found")
-}
-
-func findHealthyPod(ctx context.Context, clientset *kubernetes.Clientset, service *v1.Service) ([]*v1.Pod, error) {
-	selector := labels.Set(service.Spec.Selector).String()
-	podList, err := clientset.CoreV1().Pods(service.Namespace).List(ctx,
-		metav1.ListOptions{
-			LabelSelector: selector,
-		})
-	if err != nil {
-		return nil, err
-	}
-
-	// Ensure all nodes are looking at pods
-	sort.Slice(podList.Items, func(i, j int) bool {
-		return podList.Items[i].Name < podList.Items[j].Name
-	})
-
-	var healthyPods []*v1.Pod
+	var healthyPods []string
 
 	// Iterate through the list of pods
 	for _, pod := range podList.Items {
@@ -103,7 +68,7 @@ func findHealthyPod(ctx context.Context, clientset *kubernetes.Clientset, servic
 					}
 				}
 				if allContainersReady {
-					healthyPods = append(healthyPods, &pod)
+					healthyPods = append(healthyPods, pod.Spec.NodeName)
 				}
 			}
 		}
@@ -119,7 +84,7 @@ func findHealthyPod(ctx context.Context, clientset *kubernetes.Clientset, servic
 // The responsibility of this function is to become the leader for a service if the current
 // leader is not running on the same node as one of the services pods
 func (sm *Manager) acquireLeastForThisNodeIfLocalNode(ctx context.Context, service *v1.Service, currentLeader string) {
-	pods, err := findHealthyPod(ctx, sm.clientSet, service)
+	nodesWithHealthPod, err := findNodesWithHealthyPods(ctx, sm.clientSet, service)
 
 	if err != nil {
 		log.Errorln(err)
@@ -128,13 +93,13 @@ func (sm *Manager) acquireLeastForThisNodeIfLocalNode(ctx context.Context, servi
 
 	// check if the current lease-holder is running on a node with a healthy pod.
 	// if true then exit.
-	for _, p := range pods {
-		if p.Spec.NodeName == currentLeader {
+	for _, p := range nodesWithHealthPod {
+		if p == currentLeader {
 			return
 		}
 	}
 
-	if pods[0].Spec.NodeName == sm.config.NodeName {
+	if nodesWithHealthPod[0] == sm.config.NodeName {
 		log.Infof("Preferred node is healthy, taking over leadership forcefully.")
 		lease, err := sm.clientSet.CoordinationV1().Leases(service.Namespace).Get(ctx, fmt.Sprintf("kubevip-%s", service.Name),
 			metav1.GetOptions{})
