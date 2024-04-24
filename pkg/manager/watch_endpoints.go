@@ -200,7 +200,13 @@ func (sm *Manager) watchEndpoint(ctx context.Context, id string, service *v1.Ser
 			if sm.config.EnableEndpointSlices && provider.getProtocol() == string(discoveryv1.AddressTypeIPv6) {
 				activeEndpointAnnotation = activeEndpointIPv6
 			}
-
+			lease, err := sm.clientSet.CoordinationV1().Leases(service.Namespace).Get(ctx, fmt.Sprintf("kubevip-%s", service.Name),
+				metav1.GetOptions{})
+			if err != nil {
+				log.Errorln(err)
+			} else {
+				sm.acquireLeastForThisNodeIfLocalNode(ctx, service, *lease.Spec.HolderIdentity)
+			}
 			// Build endpoints
 			var endpoints []string
 			if (sm.config.EnableBGP || sm.config.EnableRoutingTable) && !sm.config.EnableLeaderElection && !sm.config.EnableServicesElection &&
