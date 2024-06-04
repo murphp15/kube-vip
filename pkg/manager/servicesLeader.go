@@ -89,7 +89,7 @@ func (sm *Manager) StartServicesLeaderElection(ctx context.Context, service *v1.
 				}()
 			},
 			OnStoppedLeading: func() {
-				if sm.config.CleanOpOnLeadershipLost {
+				if sm.config.ServicesCleanUpOnLeadershipLost {
 					sm.cleanUp(service)
 				}
 			},
@@ -99,7 +99,7 @@ func (sm *Manager) StartServicesLeaderElection(ctx context.Context, service *v1.
 					// I just got the lock
 					return
 				}
-				if !sm.config.CleanOpOnLeadershipLost {
+				if !sm.config.ServicesCleanUpOnLeadershipLost {
 					sm.cleanUp(service)
 				}
 				log.Infof("(svc election) new leader elected: %s", identity)

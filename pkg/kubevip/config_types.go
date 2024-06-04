@@ -208,9 +208,10 @@ type KubernetesLeaderElection struct {
 	// RetryPeriod - length of time (in seconds) the LeaderElector clients should wait between tries of actions
 	RetryPeriod int
 
-	// RetryPeriod - defaults to true, when false the networking config is only cleanup when it is known that there is a new leader
+	// RetryPeriod - defaults to true, when false the networking config is only cleaned up when it is known that there is a new leader
 	// This could lead to multiple nodes advertising the same IP in split brain situations
-	CleanOpOnLeadershipLost bool
+	// This only applies to services and doesn't apply to the control plane advertisement
+	ServicesCleanUpOnLeadershipLost bool
 
 	// LeaseAnnotations - annotations which will be given to the lease object
 	LeaseAnnotations map[string]string
