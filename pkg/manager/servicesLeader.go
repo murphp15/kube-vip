@@ -6,7 +6,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	"sort"
-	"strconv"
 	"sync"
 	"time"
 
@@ -155,6 +154,18 @@ func (sm *Manager) acquireLeastForThisNodeIfLocalNode(ctx context.Context, servi
 
 }
 
+func (sm *Manager) cleanUp(service *v1.Service) {
+	// we can do cleanup here
+	log.Infof("(svc election) service [%s] leader lost: [%s]", service.Name, sm.config.NodeName)
+	if activeService[string(service.UID)] {
+		if err := sm.deleteService(string(service.UID)); err != nil {
+			log.Errorln(err)
+		}
+	}
+	// Mark this service is inactive
+	activeService[string(service.UID)] = false
+}
+
 // The startServicesWatchForLeaderElection function will start a services watcher, the
 func (sm *Manager) StartServicesLeaderElection(ctx context.Context, service *v1.Service, wg *sync.WaitGroup) error {
 	serviceLease := fmt.Sprintf("kubevip-%s", service.Name)
@@ -198,15 +209,9 @@ func (sm *Manager) StartServicesLeaderElection(ctx context.Context, service *v1.
 				}()
 			},
 			OnStoppedLeading: func() {
-				// we can do cleanup here
-				log.Infof("(svc election) service [%s] leader lost: [%s]", service.Name, sm.config.NodeName)
-				if activeService[string(service.UID)] {
-					if err := sm.deleteService(string(service.UID)); err != nil {
-						log.Errorln(err)
-					}
+				if sm.config.CleanOpOnLeadershipLost {
+					sm.cleanUp(service)
 				}
-				// Mark this service is inactive
-				activeService[string(service.UID)] = false
 			},
 			OnNewLeader: func(identity string) {
 				// we're notified when new leader elected
@@ -214,16 +219,10 @@ func (sm *Manager) StartServicesLeaderElection(ctx context.Context, service *v1.
 					// I just got the lock
 					return
 				}
-				prefersLocal, err := strconv.ParseBool(service.Annotations["prefersLocal"])
-
-				if err != nil {
-					fmt.Println("Error:", err)
+				if !sm.config.CleanOpOnLeadershipLost {
+					sm.cleanUp(service)
 				}
-				if prefersLocal {
-					sm.acquireLeastForThisNodeIfLocalNode(ctx, service, identity)
-				} else {
-					log.Infof("(svc election) new leader elected: %s", identity)
-				}
+				log.Infof("(svc election) new leader elected: %s", identity)
 			},
 		},
 	})

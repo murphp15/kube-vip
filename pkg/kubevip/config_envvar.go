@@ -24,6 +24,10 @@ const (
 	// vipLeaderElection - defines if the kubernetes algorithm should be used
 	vipRetryPeriod = "vip_retryperiod"
 
+	// vipCleanOpOnLeadershipLost - defaults to true, when false the networking config is only cleanup when it is known that there is a new leader
+	// This could lead to multiple nodes advertising the same IP in split brain situations
+	vipCleanOpOnLeadershipLost = "vip_cleanuponleadershiplost"
+
 	// vipLeaderElection - defines the annotations given to the lease lock
 	vipLeaseAnnotations = "vip_leaseannotations"
 

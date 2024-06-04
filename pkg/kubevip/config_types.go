@@ -199,14 +199,18 @@ type KubernetesLeaderElection struct {
 	// LeaseName - name of the lease for leader election
 	LeaseName string `yaml:"leaseName"`
 
-	// Lease Duration - length of time a lease can be held for
+	// Lease Duration - length of time (in seconds) a lease can be held for
 	LeaseDuration int
 
-	// RenewDeadline - length of time a host can attempt to renew its lease
+	// RenewDeadline - length of time (in seconds) a host can attempt to renew its lease
 	RenewDeadline int
 
-	// RetryPerion - Number of times the host will retry to hold a lease
+	// RetryPeriod - length of time (in seconds) the LeaderElector clients should wait between tries of actions
 	RetryPeriod int
+
+	// RetryPeriod - defaults to true, when false the networking config is only cleanup when it is known that there is a new leader
+	// This could lead to multiple nodes advertising the same IP in split brain situations
+	CleanOpOnLeadershipLost bool
 
 	// LeaseAnnotations - annotations which will be given to the lease object
 	LeaseAnnotations map[string]string
