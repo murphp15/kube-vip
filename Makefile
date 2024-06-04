@@ -5,7 +5,7 @@ TARGET := kube-vip
 .DEFAULT_GOAL := $(TARGET)
 
 # These will be provided to the target
-VERSION := v0.8.0
+VERSION := v0.7.2
 
 BUILD := `git rev-parse HEAD`
 
@@ -66,7 +66,7 @@ dockerx86:
 
 docker:
 	@-rm ./kube-vip
-	@docker buildx build  --platform linux/amd64,linux/arm64,linux/arm/v7,linux/ppc64le,linux/s390x --push -t $(REPOSITORY)/$(TARGET):$(DOCKERTAG) .
+	@docker buildx build  --platform linux/amd64 --push -t paulm2430/paul-test-kube-vip .
 	@echo New Multi Architecture Docker image created
 
 ## Local (docker load of images)
